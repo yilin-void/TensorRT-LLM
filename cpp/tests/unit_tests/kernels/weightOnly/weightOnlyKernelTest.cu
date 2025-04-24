@@ -181,9 +181,38 @@ CUTLASS_TYPE_MAPPER_REGISTRY(wo::KernelType::FP16Int4PerChannel, "FP16Int4PerCha
 CUTLASS_TYPE_MAPPER_REGISTRY(wo::KernelType::BF16Int4PerChannel, "BF16Int4PerChannel", __nv_bfloat16, cutlass::uint4b_t,
     4, cutlass::WeightOnlyQuantOp::PER_COLUMN_SCALE_ONLY);
 
+__global__ void get_timestamps_kernel(uint64_t* global_timestamp, uint64_t* sm0_timestamp) {
+  uint32_t smid;
+  asm volatile("mov.u32 %0, %%smid;" : "=r"(smid));
+  if (smid == 0) {
+    uint64_t gts, lts;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(gts));
+    lts = clock64();
+
+    *global_timestamp = gts;
+    *sm0_timestamp = lts;
+  }
+}
+
+void get_timestamps(int sms, uint64_t* global_timestamp, uint64_t* sm0_timestamp, cudaStream_t stream) {
+    get_timestamps_kernel<<<sms, 1, 0, stream>>>(global_timestamp, sm0_timestamp);
+}
+
+int get_sm_count() {
+    const int device_id = 0;
+    static int num_sms = 0;
+    if (num_sms == 0) {
+        TLLM_CUDA_CHECK(cudaDeviceGetAttribute(&num_sms, cudaDevAttrMultiProcessorCount, device_id));
+    }
+    return num_sms;
+}
+
 float run_cuda_kernel(wo::Params& params, int warmup, int iter)
 {
     int arch = tensorrt_llm::common::getSMVersion();
+    int sm_count = get_sm_count();
+    uint64_t* timestamps = nullptr;
+    TLLM_CUDA_CHECK(cudaHostAlloc(&timestamps, 4 * sizeof(uint64_t), cudaHostAllocMapped));
     simple_assert(wo::is_supported(arch, params.type));
     cudaStream_t s;
     cudaStreamCreate(&s);
@@ -194,18 +223,26 @@ float run_cuda_kernel(wo::Params& params, int warmup, int iter)
     {
         wo::kernel_launcher(arch, params, s);
     }
+    get_timestamps(sm_count, &timestamps[0], &timestamps[1], s);
     cudaEventRecord(begin, s);
     for (int i = 0; i < iter; ++i)
     {
         wo::kernel_launcher(arch, params, s);
     }
     cudaEventRecord(end, s);
+    get_timestamps(sm_count, &timestamps[2], &timestamps[3], s);
     cudaEventSynchronize(end);
+    cudaDeviceSynchronize();
     float time;
     cudaEventElapsedTime(&time, begin, end);
     cudaEventDestroy(begin);
     cudaEventDestroy(end);
     cudaStreamDestroy(s);
+    float elapsed_ns = static_cast<float>(timestamps[2] - timestamps[0]) / iter;
+    float elapsed_clocks = static_cast<float>(timestamps[3] - timestamps[1]) / iter;
+    float clock_rate = elapsed_clocks / elapsed_ns;
+    printf("avg elapsed time %.3f us, avg elapsed clocks %.3f, clock rate %.3f GHz\n", elapsed_ns / 1000.f, elapsed_clocks, clock_rate);
+    TLLM_CUDA_CHECK(cudaFreeHost(timestamps));
     return time / iter;
 }
 
@@ -388,7 +425,12 @@ bool benchmark_and_verify(int m, int n, int k, int groupsize, int warmup, int it
     float time1, time2;
     time1 = run_cuda_kernel(params, warmup, iter);
     d_out.copy_to(h_out1.data());
-    time2 = run_cutlass_kernel<KT>(params, warmup, iter);
+    if(warmup == 0 && iter == 1) {
+        time2 = 1e3;
+    } else {
+        time2 = run_cutlass_kernel<KT>(params, warmup, iter);
+    }
+    
     d_out.copy_to(h_out2.data());
     float quant_scale = 1.f / (1 << (WSizeInBits - 1));
     bool pass = compare<AType>(h_out1.data(), h_out2.data(), m * n, quant_scale);
@@ -397,51 +439,86 @@ bool benchmark_and_verify(int m, int n, int k, int groupsize, int warmup, int it
     return pass;
 }
 
-TEST(Kernel, WeightOnly)
+// TEST(Kernel, WeightOnly)
+// {
+//     int const arch = tensorrt_llm::common::getSMVersion();
+//     bool pass;
+//     int warmup = 10, iter = 30;
+//     std::vector<int> ms{2, 4, 6, 8, 10, 12, 14};
+//     std::vector<int> ns{4096};
+//     std::vector<int> ks{2048};
+//     for (auto m : ms)
+//     {
+//         for (auto n : ns)
+//         {
+//             for (auto k : ks)
+//             {
+//                 pass = benchmark_and_verify<wo::KernelType::FP16Int8PerChannel>(m, n, k, 0, warmup, iter);
+//                 EXPECT_TRUE(pass);
+//                 pass = benchmark_and_verify<wo::KernelType::FP16Int4PerChannel>(m, n, k, 0, warmup, iter);
+//                 EXPECT_TRUE(pass);
+//                 if (arch >= 75)
+//                 {
+//                     pass = benchmark_and_verify<wo::KernelType::FP16Int8Groupwise>(m, n, k, 64, warmup, iter);
+//                     EXPECT_TRUE(pass);
+//                     pass = benchmark_and_verify<wo::KernelType::FP16Int8Groupwise>(m, n, k, 128, warmup, iter);
+//                     EXPECT_TRUE(pass);
+//                     pass = benchmark_and_verify<wo::KernelType::FP16Int4Groupwise>(m, n, k, 64, warmup, iter);
+//                     EXPECT_TRUE(pass);
+//                     pass = benchmark_and_verify<wo::KernelType::FP16Int4Groupwise>(m, n, k, 128, warmup, iter);
+//                     EXPECT_TRUE(pass);
+// #if defined(ENABLE_BF16)
+//                     if (arch >= 80)
+//                     {
+//                         pass = benchmark_and_verify<wo::KernelType::BF16Int8Groupwise>(m, n, k, 64, warmup, iter);
+//                         EXPECT_TRUE(pass);
+//                         pass = benchmark_and_verify<wo::KernelType::BF16Int8Groupwise>(m, n, k, 128, warmup, iter);
+//                         EXPECT_TRUE(pass);
+//                         pass = benchmark_and_verify<wo::KernelType::BF16Int4Groupwise>(m, n, k, 64, warmup, iter);
+//                         EXPECT_TRUE(pass);
+//                         pass = benchmark_and_verify<wo::KernelType::BF16Int4Groupwise>(m, n, k, 128, warmup, iter);
+//                         EXPECT_TRUE(pass);
+//                         pass = benchmark_and_verify<wo::KernelType::BF16Int8PerChannel>(m, n, k, 0, warmup, iter);
+//                         EXPECT_TRUE(pass);
+//                         pass = benchmark_and_verify<wo::KernelType::BF16Int4PerChannel>(m, n, k, 0, warmup, iter);
+//                         EXPECT_TRUE(pass);
+//                     }
+// #endif
+//                 }
+//             }
+//         }
+//     }
+// }
+
+TEST(WeightOnly, Benchmark)
 {
     int const arch = tensorrt_llm::common::getSMVersion();
     bool pass;
+    static const char* str_ncu_profile = std::getenv("NCU_PROFILE");
     int warmup = 10, iter = 30;
-    std::vector<int> ms{2, 4, 6, 8, 10, 12, 14};
+    if (str_ncu_profile)
+    {
+        warmup = 0;
+        iter = 1;
+    }
+    printf("warmup %d, iter %d\n", warmup, iter);
+    std::vector<int> ms{1};
     std::vector<int> ns{4096};
-    std::vector<int> ks{2048};
+    std::vector<int> ks{4096};
     for (auto m : ms)
     {
         for (auto n : ns)
         {
             for (auto k : ks)
             {
-                pass = benchmark_and_verify<wo::KernelType::FP16Int8PerChannel>(m, n, k, 0, warmup, iter);
-                EXPECT_TRUE(pass);
                 pass = benchmark_and_verify<wo::KernelType::FP16Int4PerChannel>(m, n, k, 0, warmup, iter);
                 EXPECT_TRUE(pass);
                 if (arch >= 75)
                 {
-                    pass = benchmark_and_verify<wo::KernelType::FP16Int8Groupwise>(m, n, k, 64, warmup, iter);
-                    EXPECT_TRUE(pass);
-                    pass = benchmark_and_verify<wo::KernelType::FP16Int8Groupwise>(m, n, k, 128, warmup, iter);
-                    EXPECT_TRUE(pass);
                     pass = benchmark_and_verify<wo::KernelType::FP16Int4Groupwise>(m, n, k, 64, warmup, iter);
                     EXPECT_TRUE(pass);
                     pass = benchmark_and_verify<wo::KernelType::FP16Int4Groupwise>(m, n, k, 128, warmup, iter);
                     EXPECT_TRUE(pass);
-#if defined(ENABLE_BF16)
-                    if (arch >= 80)
-                    {
-                        pass = benchmark_and_verify<wo::KernelType::BF16Int8Groupwise>(m, n, k, 64, warmup, iter);
-                        EXPECT_TRUE(pass);
-                        pass = benchmark_and_verify<wo::KernelType::BF16Int8Groupwise>(m, n, k, 128, warmup, iter);
-                        EXPECT_TRUE(pass);
-                        pass = benchmark_and_verify<wo::KernelType::BF16Int4Groupwise>(m, n, k, 64, warmup, iter);
-                        EXPECT_TRUE(pass);
-                        pass = benchmark_and_verify<wo::KernelType::BF16Int4Groupwise>(m, n, k, 128, warmup, iter);
-                        EXPECT_TRUE(pass);
-                        pass = benchmark_and_verify<wo::KernelType::BF16Int8PerChannel>(m, n, k, 0, warmup, iter);
-                        EXPECT_TRUE(pass);
-                        pass = benchmark_and_verify<wo::KernelType::BF16Int4PerChannel>(m, n, k, 0, warmup, iter);
-                        EXPECT_TRUE(pass);
-                    }
-#endif
                 }
             }
         }

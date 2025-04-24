@@ -41,6 +41,7 @@ __global__ void kernel(TypeA* act, TypeA* act_scale, uint8_t* weight, TypeA* sca
     // input            bias             fp16/bf16              [1, n]                          RowMajor
     // output           out              fp16/bf16              [m, n]                          RowMajor
     // clang-format on
+    // auto clock0 = clock64();
     using AccessTypeA = typename Details::AccessTypeA;
     using AccessTypeW = typename Details::AccessTypeW;
 
@@ -85,7 +86,7 @@ __global__ void kernel(TypeA* act, TypeA* act_scale, uint8_t* weight, TypeA* sca
 
     TypeA tile_acc[CtaM * CtaN];
     fill<CtaM * CtaN>(tile_acc, static_cast<TypeA>(0.f));
-
+    // auto clock1 = clock64();
     for (int idx_k = tid * StepK, iter = 0; idx_k < interleaved_k; idx_k += CtaK, ++iter)
     {
         TypeA vec_act_scale[StepK];
@@ -115,7 +116,15 @@ __global__ void kernel(TypeA* act, TypeA* act_scale, uint8_t* weight, TypeA* sca
             mma<Details, 1, CtaN, StepK>(tile_acc + i * CtaN, tile_w_pack2, tile_a);
         }
     }
+    // auto clock2 = clock64();
     epilogue<Details, CtaM, CtaN, Threads, EnableBias, ApplyAlphaInAdvance>(out, n, tile_acc, bias, alpha);
+    // auto clock3 = clock64();
+    // if(tid == 0 && tile_id_m == 0 && tile_id_n == 0) {
+    //     printf("kernel time %ld clocks\n", clock3 - clock0);
+    //     printf("prologue time %ld clocks\n", clock1 - clock0);
+    //     printf("mainloop time %ld clocks\n", clock2 - clock1);
+    //     printf("epilogue time %ld clocks\n", clock3 - clock2);
+    // }
 }
 
 template <typename Details, int CtaM, int CtaN, int Threads, int GroupSize, bool EnableActScale, bool EnableZero,

@@ -219,6 +219,7 @@ template <typename Details, int CtaM, int CtaN, int Threads, bool EnableBias, bo
 __device__ __forceinline__ void epilogue(void* out, int stride, void* tile_acc, void* bias, float alpha)
 {
     using Type = typename MathWrapper<typename Details::TypeDetailsA>::Type;
+    // auto clock0 = clock64();
     static constexpr int Interleave = Details::kInterleave;
     static constexpr int ThreadsPerInterleavedTile = Details::kThreadsPerInterleavedTile;
     static constexpr int WarpSize = Details::kWarpSize;
@@ -244,6 +245,7 @@ __device__ __forceinline__ void epilogue(void* out, int stride, void* tile_acc, 
         }
     }
     __syncthreads();
+    // auto clock1 = clock64();
 #pragma unroll
     for (int ii = tid; ii < CtaM * CtaN * Interleave; ii += Threads)
     {
@@ -267,6 +269,10 @@ __device__ __forceinline__ void epilogue(void* out, int stride, void* tile_acc, 
             reinterpret_cast<Type*>(out)[m * stride + n] = static_cast<Type>(alpha * val + v_bias);
         }
     }
+    // auto clock2 = clock64();
+    // if(threadIdx.x == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
+    //     printf("epilogue time 0 %ld clocks, time 1 %ld clocks, total %ld clocks\n", clock1 - clock0, clock2 - clock1, clock2 - clock0);
+    // }
 }
 
 template <int N, typename T>

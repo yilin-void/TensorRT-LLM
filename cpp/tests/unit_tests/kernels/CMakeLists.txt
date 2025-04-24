@@ -17,8 +17,8 @@ add_gtest(ropeTest ropeTest.cu)
 add_gtest(shiftKCacheKernelTest shiftKCacheKernelTest.cu)
 add_gtest(smoothQuantKernelTest smoothQuant/smoothQuantKernelTest.cpp)
 add_gtest(stopCriteriaKernelsTest stopCriteriaKernelsTest.cpp)
-add_gtest(weightOnlyKernelTest weightOnly/weightOnlyKernelTest.cpp)
-
+add_gtest(weightOnlyKernelTest weightOnly/weightOnlyKernelTest.cu)
+add_gtest(devKernelTest weightOnly/devKernelTest.cu)
 add_gtest(cudaCoreGemmKernelTest cudaCoreGemm/cudaCoreGemmKernelTest.cpp)
 
 if(NOT ENABLE_MULTI_DEVICE EQUAL 0)
