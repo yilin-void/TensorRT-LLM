@@ -127,11 +127,14 @@ class MpiSession(abc.ABC):
 class MpiPoolSession(MpiSession):
 
     def __init__(self, n_workers: int):
+        logger.info("[zyl] create MpiPoolSession, n_workers: {}".format(n_workers))
         self.n_workers = n_workers
         self.mpi_pool: Optional[MPIPoolExecutor] = None
         self._start_mpi_pool()
         if ENABLE_MULTI_DEVICE:
             self.comm = mpi4py.MPI.COMM_WORLD
+            logger.info("[zyl] MpiPoolSession, comm: {}".format(self.comm))
+        logger.info("[zyl] MpiPoolSession init done...")
 
     def get_comm(self):
         return self.comm
@@ -161,8 +164,10 @@ class MpiPoolSession(MpiSession):
     def _start_mpi_pool(self):
         assert not self.mpi_pool, 'MPI session already started'
 
+        logger.info("[zyl] start mpi pool, n_workers: {}".format(self.n_workers))
         self.mpi_pool = MPIPoolExecutor(max_workers=self.n_workers,
                                         path=sys.path)
+        logger.info("[zyl] mpi pool started...")
 
     def __del__(self):
         self.shutdown_abort()
@@ -266,6 +271,7 @@ class RemoteMpiCommSessionClient():
     def __init__(self, addr: str, hmac_key: Optional[bytes] = None):
         # FIXME: this is a hack to avoid circular import, resolve later
         from tensorrt_llm.executor.ipc import ZeroMqQueue
+        logger.info("[zyl] RemoteMpiCommSessionClient, addr: {}, hmac_key: {}".format(addr, hmac_key))
         self.addr = addr
         print_colored_debug(
             f"RemoteMpiCommSessionClient connecting to {addr}\n", "yellow")
@@ -318,6 +324,7 @@ class RemoteMpiCommSessionServer():
                  is_comm: bool = False):
         # FIXME: this is a hack to avoid circular import, resolve later
         from tensorrt_llm.executor.ipc import ZeroMqQueue
+        logger.info("[zyl] RemoteMpiCommSessionServer, addr: {}, hmac_key: {}".format(addr, hmac_key))
         self.addr = addr
         self.queue = ZeroMqQueue((addr, hmac_key),
                                  is_server=True,

@@ -40,7 +40,7 @@ class ZeroMqQueue:
             is_server (bool): Whether the current process is the server or the client.
             use_hmac_encryption (bool): Whether to use HMAC encryption for pickled data. Defaults to True.
         '''
-
+        logger.info("[zyl] ZeroMqQueue, address: {}, is_server: {}, is_async: {}, name: {}, use_hmac_encryption: {}".format(address, is_server, is_async, name, use_hmac_encryption))
         self.socket_type = socket_type
         self.address_endpoint = address[
             0] if address is not None else "tcp://127.0.0.1:*"

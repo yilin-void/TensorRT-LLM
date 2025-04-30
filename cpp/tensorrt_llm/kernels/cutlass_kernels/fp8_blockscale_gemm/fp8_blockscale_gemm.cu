@@ -178,6 +178,11 @@ void CutlassFp8BlockScaleGemmRunner<ElementA, ElementB, ElementD>::moeGemm(void*
         TLLM_THROW("fp8 blockscale gemm only support __nv_fp8_e4m3 or bfloat16 as dataType.");
     }
 #else
+    auto const sm = tensorrt_llm::common::getSMVersion();
+    if(sm == 89) {
+        TLLM_LOG_ERROR("SM89 not supported for FP8 block scaling group GEMM, skip!");
+        return;
+    }
     TLLM_THROW("fp8 blockscale gemm only support Hopper.");
 #endif
 }

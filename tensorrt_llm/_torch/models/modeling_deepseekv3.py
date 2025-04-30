@@ -339,6 +339,7 @@ class Deepseekv3MoE(nn.Module):
                  aux_stream_dict: Dict[AuxStreamType, torch.cuda.Stream],
                  dtype: Optional[torch.dtype] = None,
                  model_config: ModelConfig = ModelConfig()):
+        print("Deepseekv3MoE init")
         from ..distributed import AllReduce
 
         super().__init__()
@@ -462,6 +463,7 @@ class Deepseekv3MoE(nn.Module):
         final_all_reduce_params: Optional[AllReduceParams] = None,
         min_latency_mode: Optional[bool] = False,
     ) -> torch.Tensor:
+        print("Deepseekv3MoE forward")
         if min_latency_mode:
             assert not self.use_dp
 
@@ -502,6 +504,7 @@ class DeepseekV3DecoderLayer(DecoderLayer):
     def __init__(self, model_config: ModelConfig[PretrainedConfig],
                  layer_idx: int, aux_stream_dict: Dict[AuxStreamType,
                                                        torch.cuda.Stream]):
+        print("DeepseekV3DecoderLayer init")
         super().__init__()
         self.model_config = model_config
         config = model_config.pretrained_config
@@ -635,6 +638,7 @@ class DeepseekV3DecoderLayer(DecoderLayer):
         residual: torch.Tensor,
         **kwargs,
     ) -> torch.Tensor:
+        print("DeepseekV3DecoderLayer forward")
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
@@ -810,6 +814,7 @@ class DeepseekV3MTP(DeepseekV3DecoderLayer):
     def __init__(self, model_config: ModelConfig[PretrainedConfig],
                  layer_idx: int, aux_stream_dict: Dict[AuxStreamType,
                                                        torch.cuda.Stream]):
+        print("DeepseekV3MTP init")
         super().__init__(model_config, layer_idx, aux_stream_dict)
         config = model_config.pretrained_config
         self.hidden_dim = config.hidden_size
@@ -848,7 +853,7 @@ class DeepseekV3MTP(DeepseekV3DecoderLayer):
         spec_metadata: MTPSpecMetadata,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-
+        print("DeepseekV3MTP forward")
         # deepseek allreduce kernel is better when m < 512
         using_prev_fusion = self.deepseek_allreduce_disabled or hidden_states.size(
             0) >= 512
@@ -933,6 +938,7 @@ class DeepseekV3MTP(DeepseekV3DecoderLayer):
 class DeepseekV3Model(DecoderModel):
 
     def __init__(self, model_config: ModelConfig[PretrainedConfig]):
+        print("DeepseekV3Model init")
         super().__init__(model_config)
         config = model_config.pretrained_config
         self.padding_idx = config.pad_token_id
@@ -967,6 +973,7 @@ class DeepseekV3Model(DecoderModel):
         inputs_embeds: Optional[torch.FloatTensor] = None,
         pipeline_interface: Optional[PipelineInterface] = None,
     ) -> torch.Tensor:
+        print("DeepseekV3Model forward")
         if self.model_config.mapping.is_first_pp_rank():
             if (input_ids is None) ^ (inputs_embeds is not None):
                 raise ValueError(
@@ -1005,6 +1012,7 @@ class DeepseekV3ForCausalLM(DecoderModelForCausalLM[DeepseekV3Model,
                                                     PretrainedConfig]):
 
     def __init__(self, model_config: ModelConfig[PretrainedConfig]):
+        print("DeepseekV3ForCausalLM init")
         super().__init__(DeepseekV3Model(model_config),
                          config=model_config,
                          hidden_size=model_config.pretrained_config.hidden_size,
@@ -1064,6 +1072,7 @@ class DeepseekV3ForCausalLM(DecoderModelForCausalLM[DeepseekV3Model,
         return_context_logits: bool = False,
         **kwargs,
     ) -> torch.Tensor:
+        print("DeepseekV3ForCausalLM forward")
         attn_metadata.num_generations_per_batch = self.model_nextn + 1
         if self._supports_pp and self.pp_size > 1:
             output = self.model(

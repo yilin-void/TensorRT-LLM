@@ -348,6 +348,7 @@ class ModelLoader:
         Returns:
             prequantized (bool): Whether the checkpoint is pre-quantized.
         """
+        logger.info("[zyl] _update_from_hf_quant_config...")
         quant_config = self.llm_args.quant_config
 
         hf_quant_config_path = f"{self._model_dir}/hf_quant_config.json"
@@ -399,7 +400,7 @@ class ModelLoader:
             for key, value in hf_quant_config.items():
                 logger.info(f"Setting {key}={value} from HF quant config.")
                 setattr(quant_config, key, value)
-
+            logger.info("[zyl] _update_from_hf_quant_config done... 0")
             return True
 
         hf_config_path = f"{self._model_dir}/config.json"
@@ -421,9 +422,9 @@ class ModelLoader:
                 else:
                     raise NotImplementedError(
                         f"Unsupported quantization_config: {hf_quant_config}.")
-
+                logger.info("[zyl] _update_from_hf_quant_config done... 1")
                 return True
-
+        logger.info("[zyl] _update_from_hf_quant_config done... 2")
         return False
 
     def _load_model_from_hf(self):

@@ -516,6 +516,7 @@ def worker_main(
         bool] = True,  # whether it's the main executor instance
     lora_config: Optional[LoraConfig] = None,
 ) -> None:
+    logger.info("[zyl] worker_main...")
     mpi_comm().barrier()
     print_colored_debug(f"Worker {mpi_rank()} entering worker_main...\n",
                         "green")

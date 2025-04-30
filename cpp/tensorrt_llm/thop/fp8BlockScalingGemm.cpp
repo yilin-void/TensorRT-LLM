@@ -162,6 +162,14 @@ extern torch::Tensor fp8_block_scaling_gemm(torch::Tensor const& mat1, torch::Te
     {
     case 100: return fp8_block_scale_gemm_blackwell(mat1, mat2, mat1Scale, mat2Scale);
     case 90: return fp8_block_scaling_gemm_hopper(mat1, mat2, mat1Scale, mat2Scale);
+    case 89: {
+        TLLM_LOG_ERROR("SM89 not supported for FP8 block scaling GEMM, skip!");
+        auto const m = mat1.sizes()[0];
+        auto const n = mat2.sizes()[0];
+
+        at::Tensor out = at::detail::empty_cuda({m, n}, at::ScalarType::BFloat16, mat1.device(), std::nullopt);
+        return out;
+    }
     default: TORCH_CHECK(false, "Unsupported SM version for FP8 block scaling GEMM");
     }
 }
@@ -238,6 +246,12 @@ torch::Tensor fp8_block_scaling_bmm_out(torch::Tensor const& mat1, torch::Tensor
     auto const k = mat1.sizes()[2];
     TORCH_CHECK(k % 16 == 0, "K must be a multiple of 16, (K=", k, ")");
     TORCH_CHECK(n % 16 == 0, "N must be a multiple of 16, (N=", n, ")");
+
+    auto const sm = tensorrt_llm::common::getSMVersion();
+    if(sm == 89) {
+        TLLM_LOG_ERROR("SM89 not supported for FP8 block scaling BMM out, skip!");
+        return out;
+    }
 
     CHECK_TH_CUDA(out);
     CHECK_TYPE(out, at::ScalarType::BFloat16);

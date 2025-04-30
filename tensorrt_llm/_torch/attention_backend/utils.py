@@ -8,6 +8,7 @@ from .vanilla import VanillaAttention
 
 
 def get_attention_backend(backend_name: str) -> Type[AttentionBackend]:
+    print(f"get_attention_backend: {backend_name}")
     if backend_name == "VANILLA":
         return VanillaAttention
     elif backend_name == "TRTLLM":
