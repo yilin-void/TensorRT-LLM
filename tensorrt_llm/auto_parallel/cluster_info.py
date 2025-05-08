@@ -434,7 +434,7 @@ def nvlink_bandwidth(nvlink_version: int) -> int:
 
 
 def infer_cluster_info() -> ClusterInfo:
-    logger.info("[zyl] infer cluster info...")
+    logger.error("[zyl] infer cluster info...")
     device = torch.cuda.current_device()
     index = device.index if isinstance(device, torch.device) else device
     with PyNVMLContext():
@@ -504,7 +504,7 @@ def infer_cluster_info() -> ClusterInfo:
             intra_node_bw_per_device=intra_node_bw,
             intra_node_sharp=intra_node_sharp,
         )
-        logger.info("[zyl] infer cluster info done...")
+        logger.error("[zyl] infer cluster info done...")
     return cluster_info
 
 
@@ -512,7 +512,7 @@ def infer_cluster_config() -> Dict[str, Union[str, ClusterInfo]]:
     device_name = torch.cuda.get_device_name(torch.cuda.current_device())
     cluster_key = infer_cluster_key()
     if cluster_key is not None:
-        logger.info("[zyl] infer cluster key success, is {}".format(cluster_key))
+        logger.error("[zyl] infer cluster key success, is {}".format(cluster_key))
         return dict(cluster_key=cluster_key)
     else:
         try:
@@ -526,7 +526,7 @@ def infer_cluster_config() -> Dict[str, Union[str, ClusterInfo]]:
                 f"Failed to infer cluster info for {device_name}, "
                 f"treat it as a {fallback_cluster_key} node with {memory_budget} GB memory. "
                 "This setting makes no effect if you do not use auto parallel.")
-        logger.info("[zyl] infer cluster key failed, infer cluster config success, cluster key is {}".format(device_name.replace(" ", "-")))
+        logger.error("[zyl] infer cluster key failed, infer cluster config success, cluster key is {}".format(device_name.replace(" ", "-")))
         return dict(
             cluster_key=device_name.replace(" ", "-"),
             cluster_info=cluster_info,

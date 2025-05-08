@@ -11,6 +11,7 @@ from tensorrt_llm._utils import (mpi_allgather, mpi_barrier, mpi_broadcast,
                                  mpi_comm, mpi_isend, mpi_recv,
                                  torch_dtype_to_np)
 from tensorrt_llm.mapping import Mapping
+from tensorrt_llm.llmapi.utils import print_colored_debug
 
 
 class Distributed(ABC):
@@ -178,16 +179,19 @@ class MPIDist(Distributed):
 class TorchDist(Distributed):
 
     def __init__(self, mapping: Mapping):
+        print_colored_debug("TorchDist init...\n", "yellow")
         super().__init__(mapping)
         if not dist.is_initialized():
             master_ip = os.getenv("MASTER_ADDR", "localhost")
             # TODO: fix the constant default port
             master_port = os.getenv("MASTER_PORT", "6000")
             init_method = f"tcp://{master_ip}:{master_port}"
+            print_colored_debug(f"init_method: {init_method}\n", "green")
             dist.init_process_group(backend="nccl",
                                     init_method=init_method,
                                     world_size=mapping.world_size,
                                     rank=mapping.rank)
+        print_colored_debug(f"dist.is_initialized(): {dist.is_initialized()}\n", "yellow")
         self.device_tp_group = dist.new_group(mapping.tp_group, backend="nccl")
         self.cpu_tp_group = dist.new_group(mapping.tp_group, backend="gloo")
         self.device_cp_group = dist.new_group(mapping.cp_group, backend="nccl")
@@ -237,17 +241,19 @@ class TorchDist(Distributed):
 class PPComm:
     # PP communication using torch.distributed with nccl backend
     def __init__(self, global_mapping: Mapping):
+        print_colored_debug("PPComm init...\n", "yellow")
         self.mapping = global_mapping
         if not dist.is_initialized():
             master_ip = os.getenv("MASTER_ADDR", "localhost")
             master_port = os.getenv("MASTER_PORT", "6000")
             init_method = f"tcp://{master_ip}:{master_port}"
+            print_colored_debug(f"init_method: {init_method}\n", "green")
             dist.init_process_group(backend="nccl",
                                     init_method=init_method,
                                     world_size=global_mapping.world_size,
                                     rank=global_mapping.rank)
             atexit.register(self._cleanup)
-
+        print_colored_debug(f"dist.is_initialized(): {dist.is_initialized()}\n", "yellow")
         # Force NCCL initialization and rank population via PyTorch distributed barrier.
         # This is necessary for NOW if using pp + tp because our custom nccl allreduce
         # op for tp groups can interfere with PyTorch's NCCL initialization when PyTorch

@@ -44,7 +44,7 @@ class ExecutorBindingsProxy(GenerationExecutor):
         postproc_worker_config: Optional[PostprocWorkerConfig] = None,
         is_llm_executor: Optional[bool] = None,
     ) -> None:
-        logger.info("[zyl] ExecutorBindingsProxy.__init__...")
+        logger.error("[zyl] ExecutorBindingsProxy.__init__...")
         postproc_worker_config = postproc_worker_config or PostprocWorkerConfig(
         )
         super().__init__(
@@ -54,14 +54,14 @@ class ExecutorBindingsProxy(GenerationExecutor):
             postprocess_tokenizer_dir,
             is_llm_executor=is_llm_executor,
         )
-        logger.info("[zyl] ExecutorBindingsProxy.super().__init__ done...")
+        logger.error("[zyl] ExecutorBindingsProxy.super().__init__ done...")
 
         self.workers_started = False
         self.doing_pre_shutdown = False
         self.worker_cls = worker_cls
 
         mpi_process_pre_spawned: bool = get_spawn_proxy_process_env()
-        logger.info("[zyl] mpi_process_pre_spawned: {}".format(mpi_process_pre_spawned))
+        logger.error("[zyl] mpi_process_pre_spawned: {}".format(mpi_process_pre_spawned))
         if mpi_session is None:
             if mpi_process_pre_spawned:
                 print_colored_debug('create comm session ...\n', "yellow")
@@ -72,7 +72,7 @@ class ExecutorBindingsProxy(GenerationExecutor):
         else:
             print_colored_debug('using external mpi session ...\n', "yellow")
             self.mpi_session = mpi_session
-        logger.info("[zyl] self.mpi_session: {}".format(self.mpi_session))
+        logger.error("[zyl] self.mpi_session: {}".format(self.mpi_session))
         if isinstance(self.mpi_session,
                       (MpiCommSession, RemoteMpiCommSessionClient)):
             print_colored(
@@ -84,7 +84,7 @@ class ExecutorBindingsProxy(GenerationExecutor):
                 "yellow")
         
         self._results: Dict[int, GenerationResult] = {}
-        logger.info("[zyl] self._results: {}".format(self._results))
+        logger.error("[zyl] self._results: {}".format(self._results))
 
         self.model_world_size = model_world_size
 
@@ -94,14 +94,14 @@ class ExecutorBindingsProxy(GenerationExecutor):
                              is_llm_executor=False)
         if "log_level" not in worker_kwargs:
             worker_kwargs["log_level"] = logger.level
-        logger.info("[zyl] worker_kwargs: {}".format(worker_kwargs))
+        logger.error("[zyl] worker_kwargs: {}".format(worker_kwargs))
 
         self.dispatch_result_thread: Optional[ManagedThread] = None
         self.dispatch_stats_thread: Optional[ManagedThread] = None
         self.dispatch_kv_cache_events_thread: Optional[ManagedThread] = None
-        logger.info("[zyl] before self._start_executor_workers...")
+        logger.error("[zyl] before self._start_executor_workers...")
         self._start_executor_workers(worker_kwargs)
-        logger.info("[zyl] after self._start_executor_workers...")
+        logger.error("[zyl] after self._start_executor_workers...")
 
         # MPI registers its joiner using threading._register_atexit if possible.
         # These functions run before atexit.register, so to avoid deadlock,
@@ -111,7 +111,7 @@ class ExecutorBindingsProxy(GenerationExecutor):
                 self.pre_shutdown)
         except AttributeError:
             atexit.register(self.pre_shutdown)
-        logger.info("[zyl] ExecutorBindingsProxy.__init__ done...")
+        logger.error("[zyl] ExecutorBindingsProxy.__init__ done...")
 
     def _setup_queues(self) -> WorkerCommIpcAddrs:
 
@@ -294,8 +294,8 @@ class ExecutorBindingsProxy(GenerationExecutor):
         tracer_init_kwargs = get_tracer().init_kwargs if enable_llm_tracer(
         ) else None
         from tensorrt_llm._torch.models.modeling_auto import MODEL_CLASS_MAPPING
-        logger.info("[zyl] worker_kwargs: {}".format(worker_kwargs))
-        logger.info("[zyl] before self.mpi_session.submit...")
+        logger.error("[zyl] worker_kwargs: {}".format(worker_kwargs))
+        logger.error("[zyl] before self.mpi_session.submit...")
         self.mpi_futures = self.mpi_session.submit(
             worker_main,
             **worker_kwargs,
@@ -304,12 +304,12 @@ class ExecutorBindingsProxy(GenerationExecutor):
             _torch_model_class_mapping=MODEL_CLASS_MAPPING,
             ready_signal=ExecutorBindingsProxy.READY_SIGNAL,
         )
-        logger.info("[zyl] after self.mpi_session.submit...")
+        logger.error("[zyl] after self.mpi_session.submit...")
         for fut in self.mpi_futures:
             fut.add_done_callback(mpi_done_callback)
 
         self.workers_started = True
-        logger.info("[zyl] before while True...")
+        logger.error("[zyl] before while True...")
         while True:
             if self.request_error_queue.poll(1):
                 ready_signal = self.request_error_queue.get()
@@ -320,7 +320,7 @@ class ExecutorBindingsProxy(GenerationExecutor):
                     "Executor worker died during initialization")
                 break
             self._handle_background_error()
-        logger.info("[zyl] after while True...")
+        logger.error("[zyl] after while True...")
         if ready_signal != ExecutorBindingsProxy.READY_SIGNAL:
             self.mpi_session.shutdown_abort(reason=ready_signal)
             raise ready_signal

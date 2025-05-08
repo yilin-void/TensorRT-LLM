@@ -917,7 +917,7 @@ class LlmArgs(BaseModel):
 
     @print_traceback_on_error
     def model_post_init(self, __context: Any):
-        logger.info("[zyl] model post init...")
+        logger.error("[zyl] model post init...")
         if self.skip_tokenizer_init:
             self.tokenizer = None
         else:
@@ -978,7 +978,7 @@ class LlmArgs(BaseModel):
 
         # This is used to hold th options for convert_checkpoint
         self._convert_checkpoint_options = {}
-        logger.info("[zyl] model post init done...")
+        logger.error("[zyl] model post init done...")
     @classmethod
     def from_kwargs(cls, **kwargs: Any) -> "LlmArgs":
         """Create `LlmArgs` instance from kwargs.
@@ -1006,7 +1006,7 @@ class LlmArgs(BaseModel):
     @staticmethod
     def _maybe_update_config_for_consistency(
             kwargs_dict: Dict[str, Any]) -> Dict[str, Any]:
-        logger.info("[zyl] maybe update config for consistency...")
+        logger.error("[zyl] maybe update config for consistency...")
         # max_beam_width is not included since vague behavior due to lacking the support for dynamic beam width during
         # generation
         black_list = set(["max_beam_width"])
@@ -1038,12 +1038,12 @@ class LlmArgs(BaseModel):
                         f"Overriding LlmArgs.{field_name} ({llmargs_val}) with build_config.{field_name} ({build_val})."
                     )
                     kwargs_dict[field_name] = build_val
-        logger.info("[zyl] maybe update config for consistency done...")
+        logger.error("[zyl] maybe update config for consistency done...")
         return kwargs_dict
 
     def _setup(self):
         ''' This method will setup the configs right before building the model. '''
-        logger.info("[zyl] setup...")
+        logger.error("[zyl] setup...")
         assert isinstance(self.model,
                           (str, Path)), f"Invalid model: {self.model}"
 
@@ -1097,7 +1097,7 @@ class LlmArgs(BaseModel):
         # from an built engine. In order to set build configuration, it is
         # recommended to use build_config instead.
         if self.build_config is not None:
-            logger.info("[zyl] build config is not None...")
+            logger.error("[zyl] build config is not None...")
             if self.max_batch_size and self.build_config.max_batch_size != self.max_batch_size:
                 logger.warning(
                     f"Conflict detected in LlmArgs build_config.max_batch_size "
@@ -1111,9 +1111,9 @@ class LlmArgs(BaseModel):
                     f"The 'max_num_tokens' specified in LlmArgs is ignored at "
                     f"engine build and will override at runtime.")
         else:
-            logger.info("[zyl] build config is None...")
+            logger.error("[zyl] build config is None...")
             self.build_config = BuildConfig()
-            logger.info("[zyl] build config is {}".format(self.build_config))
+            logger.error("[zyl] build config is {}".format(self.build_config))
             if self.max_batch_size:
                 self.build_config.max_batch_size = self.max_batch_size
             if self.max_num_tokens:
@@ -1124,9 +1124,9 @@ class LlmArgs(BaseModel):
                                 or self.quant_config.quant_algo is None):
             self._update_plugin_config("manage_weights", True)
 
-        logger.info("[zyl] nccl_plugin is {}".format(self.build_config.plugin_config.nccl_plugin))
+        logger.error("[zyl] nccl_plugin is {}".format(self.build_config.plugin_config.nccl_plugin))
         if self.parallel_config._world_size == 1:
-            logger.info("[zyl] nccl_plugin set to None due to world size is 1")
+            logger.error("[zyl] nccl_plugin set to None due to world size is 1")
             if self.parallel_config.world_size == 1:
                 self.build_config.plugin_config.nccl_plugin = None
 
@@ -1200,7 +1200,7 @@ class LlmArgs(BaseModel):
             logger.warning(
                 "Lora is an experimental feature and is probably subject to change before 1.0 release"
             )
-        logger.info("[zyl] setup done...")
+        logger.error("[zyl] setup done...")
     @property
     def _build_config_mutable(self) -> bool:
         return self.model_format is not _ModelFormatKind.TLLM_ENGINE

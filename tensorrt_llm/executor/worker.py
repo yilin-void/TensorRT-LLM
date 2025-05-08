@@ -15,7 +15,7 @@ import torch
 from tensorrt_llm.logger import logger
 
 from .._utils import (KVCacheEventSerializer, global_mpi_rank, mpi_comm,
-                      mpi_rank, nvtx_range_debug)
+                      mpi_rank, mpi_world_size, nvtx_range_debug)
 from ..bindings import executor as tllm
 from ..builder import ConfigEncoder, Engine, EngineConfig
 from ..llmapi.llm_args import PybindMirror
@@ -58,13 +58,14 @@ class ExecutorBindingsWorker(GenerationExecutor):
         is_llm_executor: Optional[bool] = None,
         lora_config: Optional[LoraConfig] = None,
     ) -> None:
+        print_colored_debug(f"ExecutorBindingsWorker init...\n", "yellow")
         postproc_config = postproc_worker_config or PostprocWorkerConfig()
         super().__init__(
             num_postprocess_workers=postproc_config.num_postprocess_workers,
             postprocess_tokenizer_dir=postproc_config.postprocess_tokenizer_dir,
             is_llm_executor=is_llm_executor,
         )
-
+        print_colored_debug(f"ExecutorBindingsWorker.super() init done...\n", "yellow")
         self.engine = None
         self.result_queue: Optional[IpcQueue] = None
         self.postproc_queues: Optional[List[IpcQueue]] = None
@@ -88,6 +89,7 @@ class ExecutorBindingsWorker(GenerationExecutor):
             processor_batched=batched_logits_processor, replicate=False)
 
         def _create_engine():
+            print_colored_debug(f"ExecutorBindingsWorker._create_engine...\n", "yellow")
             if isinstance(engine, Engine):
                 return tllm.Executor(engine.engine,
                                      json.dumps(engine.config.to_dict(),
@@ -119,10 +121,11 @@ class ExecutorBindingsWorker(GenerationExecutor):
 
             device_id = self.global_rank % torch.cuda.device_count()
             torch.cuda.set_device(device_id)
+            print_colored_debug(f"ExecutorBindingsWorker._create_engine().create_executor() ...\n", "yellow")
             return create_executor(**args)
 
         self.engine = _create_engine()
-
+        print_colored_debug(f"ExecutorBindingsWorker _create_engine() done...\n", "yellow")
         self._lora_manager: Optional[LoraManager] = None
         self._prompt_adapter_manager: Optional[PromptAdapterManager] = None
         self._runtime_model_config: Optional[ModelConfig] = None
@@ -516,9 +519,9 @@ def worker_main(
         bool] = True,  # whether it's the main executor instance
     lora_config: Optional[LoraConfig] = None,
 ) -> None:
-    logger.info("[zyl] worker_main...")
+    logger.error("[zyl] worker_main...")
     mpi_comm().barrier()
-    print_colored_debug(f"Worker {mpi_rank()} entering worker_main...\n",
+    print_colored_debug(f"Worker {mpi_rank()}/{mpi_world_size()} entering worker_main...\n",
                         "green")
 
     pid = os.getpid()
@@ -599,7 +602,7 @@ def worker_main(
 
     postprocess_worker_futures = []
     if is_leader and postproc_worker_config.enabled:
-        print_colored_debug(f"initiate postprocess workers...", "yellow")
+        print_colored_debug(f"initiate postprocess workers...\n", "yellow")
 
         proxy_result_queue: tuple[
             str, Optional[bytes]] = worker_queues.result_queue_addr
@@ -631,9 +634,10 @@ def worker_main(
     #         error to the error_queue in the main thread.
 
     mpi_comm().barrier()
-    print_colored_debug(f"Worker {mpi_rank()} ready to setup backend...\n",
+    print_colored_debug(f"Worker {mpi_rank()}/{mpi_world_size()} {worker_cls}ready to setup backend...hhhh\n",
                         "green")
-
+    print_colored_debug(f"test\n", "green")
+    print_colored_debug(f"worker_cls: {worker_cls}\n", "green")
     try:
         worker: ExecutorBindingsWorker = worker_cls(
             engine,
@@ -648,7 +652,7 @@ def worker_main(
         if is_leader:
             request_error_queue.put(e)
         return
-
+    print_colored_debug(f"worker init done...\n", "yellow")
     with worker:
         try:
             worker.block_subordinates()

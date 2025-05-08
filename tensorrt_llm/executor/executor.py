@@ -329,7 +329,7 @@ class GenerationExecutor(ABC):
         is_llm_executor: Optional[bool] = None,
         lora_config: Optional[LoraConfig] = None,
     ) -> Union["ExecutorBindingsProxy", "ExecutorBindingsWorker"]:
-        logger.info("[zyl] GenerationExecutor.create...")
+        logger.error("[zyl] GenerationExecutor.create...")
         # local imports to avoid cyclic importing
         from .proxy import ExecutorBindingsProxy
         from .worker import ExecutorBindingsWorker
@@ -367,7 +367,7 @@ class GenerationExecutor(ABC):
         if spawn_workers or (mpirun_launch and reuse_mpi_comm):
             if reuse_mpi_comm:
                 assert mpi_session is not None, "reuse_mpi_comm requires an external MPI session"
-            logger.info("[zyl] GenerationExecutor.create prepare return 0...")
+            logger.error("[zyl] GenerationExecutor.create prepare return 0...")
             return ExecutorBindingsProxy(
                 worker_kwargs,
                 model_world_size=model_world_size,
@@ -391,7 +391,7 @@ class GenerationExecutor(ABC):
         # While this requires uses to protect their entrypoint to
         # `if __name__ == "__main__":`.
         if not platform.system() == 'Windows':
-            logger.info("[zyl] GenerationExecutor.create prepare return 1...")
+            logger.error("[zyl] GenerationExecutor.create prepare return 1...")
             return ExecutorBindingsProxy(
                 worker_kwargs,
                 model_world_size=model_world_size,
@@ -403,7 +403,7 @@ class GenerationExecutor(ABC):
             # The ProcessPoolExecutorSession is used to support Windows, as mpi4py cannot.
             mpi_session = ProcessPoolExecutorSession(n_workers=1,
                                                      mp_context=ctx)
-            logger.info("[zyl] GenerationExecutor.create prepare return 2...")
+            logger.error("[zyl] GenerationExecutor.create prepare return 2...")
             return ExecutorBindingsProxy(
                 worker_kwargs,
                 model_world_size=model_world_size,

@@ -61,9 +61,9 @@ def print_colored(message,
 
 def print_colored_debug(message,
                         color: Optional[str] = None,
-                        writer: io.TextIOWrapper = sys.stderr):
-    if enable_llm_debug():
-        print_colored(message, color, writer)
+                        writer: io.TextIOWrapper = sys.stdout):
+    # if enable_llm_debug():
+    print_colored(message, color, writer)
 
 
 def file_with_glob_exists(directory, glob) -> bool:

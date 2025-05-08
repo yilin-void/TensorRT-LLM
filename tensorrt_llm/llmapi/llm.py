@@ -103,14 +103,14 @@ class LLM:
                  revision: Optional[str] = None,
                  tokenizer_revision: Optional[str] = None,
                  **kwargs: Any) -> None:
-        logger.info("[zyl] LLM init...")
-        logger.info("[zyl] kwargs: {}".format(kwargs))
+        logger.error("[zyl] LLM init...")
+        logger.error("[zyl] kwargs: {}".format(kwargs))
         self._executor_cls = kwargs.pop("executor_cls", GenerationExecutor)
-        logger.info("[zyl] self._executor_cls: {}".format(self._executor_cls))
+        logger.error("[zyl] self._executor_cls: {}".format(self._executor_cls))
         try:
             self.pytorch_backend_config = kwargs.pop('pytorch_backend_config',
                                                      None)
-            logger.info("[zyl] get llm args...")
+            logger.error("[zyl] get llm args...")
             self.args = LlmArgs.from_kwargs(
                 model=model,
                 tokenizer=tokenizer,
@@ -122,16 +122,16 @@ class LLM:
                 revision=revision,
                 tokenizer_revision=tokenizer_revision,
                 **kwargs)
-            logger.info("[zyl] get llm args done...")
+            logger.error("[zyl] get llm args done...")
         except Exception as e:
             logger.error(
                 f"Failed to parse the arguments for the LLM constructor: {e}")
             raise e
-        logger.info("[zyl] LLM.args.mpi_session: {}".format(self.args.mpi_session))
+        logger.error("[zyl] LLM.args.mpi_session: {}".format(self.args.mpi_session))
         print_colored_debug(f"LLM.args.mpi_session: {self.args.mpi_session}\n",
                             "yellow")
         self.mpi_session = self.args.mpi_session
-        logger.info("[zyl] parallel config: {}".format(self.args.parallel_config))
+        logger.error("[zyl] parallel config: {}".format(self.args.parallel_config))
         if self.args.parallel_config.is_multi_gpu:
             if get_device_count(
             ) < self.args.parallel_config.world_size_per_node:
@@ -144,7 +144,7 @@ class LLM:
             )
             if not self.mpi_session:
                 mpi_process_pre_spawned: bool = get_spawn_proxy_process_env()
-                logger.info("[zyl] create MpiPoolSession, mpi_process_pre_spawned: {}".format(mpi_process_pre_spawned))
+                logger.error("[zyl] create MpiPoolSession, mpi_process_pre_spawned: {}".format(mpi_process_pre_spawned))
                 if not mpi_process_pre_spawned:
                     print_colored_debug(f"LLM create MpiPoolSession\n",
                                         "yellow")
@@ -177,7 +177,7 @@ class LLM:
 
         exception_handler.register(self, 'shutdown')
         atexit.register(LLM._shutdown_wrapper, weakref.ref(self))
-        logger.info("[zyl] LLM init done...")
+        logger.error("[zyl] LLM init done...")
 
     @property
     def workspace(self) -> Path:
@@ -485,7 +485,7 @@ class LLM:
             )
 
     def _build_model(self):
-        logger.info("[zyl] _build_model...")
+        logger.error("[zyl] _build_model...")
         model_loader = CachedModelLoader(self.args,
                                          mpi_session=self.mpi_session,
                                          workspace=self.workspace,
@@ -499,19 +499,19 @@ class LLM:
         # Tokenizer loading should be after calling model_loader(), since model_loader() may download the model from HF hub.
         # It should also be before bindings ExecutorConfig, which may depend on tokenizer info.
         self._tokenizer = self._try_load_tokenizer()
-        logger.info("[zyl] _tokenizer: {}".format(self._tokenizer))
+        logger.error("[zyl] _tokenizer: {}".format(self._tokenizer))
         # Multimodal special handling:
         # 1. Default load_tokenizer may fail because MM has different tokenizer configuration. Hence we initialize it inside input processor
         # 2. May need to modify model weights for MM (e.g., resize vocab embedding). We must do such operation via input processor's __init__
         self.input_processor = create_input_processor(self.args.model,
                                                       self.tokenizer)
-        logger.info("[zyl] self.input_processor: {}".format(self.input_processor))
+        logger.error("[zyl] self.input_processor: {}".format(self.input_processor))
         self.tokenizer = self.input_processor.tokenizer
 
         max_batch_size = self.args.max_batch_size or self.args.build_config.max_batch_size
         max_num_tokens = self.args.max_num_tokens or self.args.build_config.max_num_tokens
         max_seq_len = self.args.max_seq_len or self.args.build_config.max_seq_len
-        logger.info("[zyl] before create executor config...")
+        logger.error("[zyl] before create executor config...")
         executor_config = tllm.ExecutorConfig(
             max_beam_width=self.args.build_config.max_beam_width,
             scheduler_config=PybindMirror.maybe_to_pybind(
@@ -521,7 +521,7 @@ class LLM:
             max_batch_size=max_batch_size,
             max_num_tokens=max_num_tokens,
             gather_generation_logits=self.args.gather_generation_logits)
-        logger.info("[zyl] after create executor config...")
+        logger.error("[zyl] after create executor config...")
         if self.args.kv_cache_config is not None:
             executor_config.kv_cache_config = PybindMirror.maybe_to_pybind(
                 self.args.kv_cache_config)
@@ -561,7 +561,7 @@ class LLM:
                 self.args.extended_runtime_perf_knob_config)
 
         from tensorrt_llm._torch.pyexecutor.config import update_executor_config
-        logger.info("[zyl] before update_executor_config...")
+        logger.error("[zyl] before update_executor_config...")
         update_executor_config(
             executor_config,
             backend=self.args.backend,
@@ -573,27 +573,27 @@ class LLM:
             trt_engine_dir=self._engine_dir,
             max_input_len=self.args.max_input_len,
             max_seq_len=max_seq_len)
-        logger.info("[zyl] after update_executor_config...")
+        logger.error("[zyl] after update_executor_config...")
         executor_config.llm_parallel_config = self.args.parallel_config
         return_logits = self.args.gather_generation_logits or (
             self.args.build_config
             and self.args.build_config.gather_context_logits)
-        logger.info("[zyl] before create executor...")
-        logger.info("[zyl] self._executor_cls: {}".format(self._executor_cls))
-        logger.info("[zyl] argument0 self._engine_dir: {}".format(self._engine_dir))
-        logger.info("[zyl] argument1 executor_config: {}".format(executor_config))
-        logger.info("[zyl] argument2 batched_logits_processor: {}".format(self.args.batched_logits_processor))
-        logger.info("[zyl] argument3 model_world_size: {}".format(self.args.parallel_config.world_size))
-        logger.info("[zyl] argument4 mpi_session: {}".format(self.mpi_session))
-        logger.info("[zyl] argument5 reuse_mpi_comm: {}".format(external_mpi_comm_available(
+        logger.error("[zyl] before create executor...")
+        logger.error("[zyl] self._executor_cls: {}".format(self._executor_cls))
+        logger.error("[zyl] argument0 self._engine_dir: {}".format(self._engine_dir))
+        logger.error("[zyl] argument1 executor_config: {}".format(executor_config))
+        logger.error("[zyl] argument2 batched_logits_processor: {}".format(self.args.batched_logits_processor))
+        logger.error("[zyl] argument3 model_world_size: {}".format(self.args.parallel_config.world_size))
+        logger.error("[zyl] argument4 mpi_session: {}".format(self.mpi_session))
+        logger.error("[zyl] argument5 reuse_mpi_comm: {}".format(external_mpi_comm_available(
                 self.args.parallel_config.world_size)))
-        logger.info("[zyl] argument6 return_logits: {}".format(return_logits))
-        logger.info("[zyl] argument7 postproc_worker_config: {}".format(PostprocWorkerConfig(
+        logger.error("[zyl] argument6 return_logits: {}".format(return_logits))
+        logger.error("[zyl] argument7 postproc_worker_config: {}".format(PostprocWorkerConfig(
                 num_postprocess_workers=self.args.num_postprocess_workers,
                 postprocess_tokenizer_dir=self.args.postprocess_tokenizer_dir,
             )))
-        logger.info("[zyl] argument8 is_llm_executor: {}".format(True))
-        logger.info("[zyl] argument9 lora_config: {}".format(self.args.lora_config))
+        logger.error("[zyl] argument8 is_llm_executor: {}".format(True))
+        logger.error("[zyl] argument9 lora_config: {}".format(self.args.lora_config))
         self._executor = self._executor_cls.create(
             self._engine_dir,
             executor_config=executor_config,
@@ -609,8 +609,8 @@ class LLM:
             ),
             is_llm_executor=True,
             lora_config=self.args.lora_config)
-        logger.info("[zyl] after create executor...")
-        logger.info("[zyl] _build_model done...")
+        logger.error("[zyl] after create executor...")
+        logger.error("[zyl] _build_model done...")
 
     def _try_load_tokenizer(self) -> Optional[TokenizerBase]:
         if self.args.skip_tokenizer_init:

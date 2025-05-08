@@ -312,12 +312,12 @@ def throughput_command(
 
         if "pytorch_backend_config" in kwargs and iteration_log is not None:
             kwargs["pytorch_backend_config"].enable_iter_perf_stats = True
-        logger.info("[zyl] build llm backend...")
+        logger.error("[zyl] build llm backend...")
         if runtime_config.backend == 'pytorch':
             llm = PyTorchLLM(**kwargs)
         else:
             llm = LLM(**kwargs)
-        logger.info("[zyl] build llm backend done...")
+        logger.error("[zyl] build llm backend done...")
         sampling_params = SamplingParams(end_id=-1,
                                          pad_id=-1,
                                          beam_width=beam_width)
