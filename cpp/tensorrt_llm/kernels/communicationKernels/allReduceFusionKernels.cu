@@ -653,10 +653,16 @@ void allreduce_fusion_kernel_launcher(AllReduceFusionParams const& params)
         threads_per_block *= 2;
         cluster_size /= 2;
     }
+    int sm_count = get_sm_count();
+    while(cluster_num * cluster_size > sm_count && cluster_size > 1 && threads_per_block <= 512)
+    {
+        threads_per_block *= 2;
+        cluster_size /= 2;
+    }
     TLLM_CHECK(oneshot || threads_per_block >= params.nranks);
     int block_size = threads_per_block;
     TLLM_CHECK(block_size <= 1024 && cluster_size > 0);
-    int sm_count = get_sm_count();
+    
     int grid_size = (std::min(sm_count, cluster_num * cluster_size) / cluster_size) * cluster_size;
     cudaLaunchConfig_t cfg;
     cudaLaunchAttribute attribute[2];
