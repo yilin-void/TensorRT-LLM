@@ -411,13 +411,15 @@ class WideEPMoE(MoE):
                 if not self.use_postquant_alltoall:
                     deep_ep_topk_idx = token_selected_slots.to(torch.int64)
                     deep_ep_topk_weights = token_final_scales
-                    x, recv_expert_count, deep_ep_handle = \
+                    full_dispatch_tensor, recv_expert_count, deep_ep_handle = \
                         self.deep_ep_buffer.low_latency_dispatch(x, deep_ep_topk_idx, self.deep_ep_max_num_tokens, self.num_slots)
                     # x shape: [#local experts, #max recv tokens, hidden_size]
                     # recv_expert_count shape: [#local experts]
 
                     # Adapter between `torch.ops.trtllm.fused_moe` and DeepEP
                     # TODO: remove the adapter by changing `torch.ops.trtllm.fused_moe` API
+                    max_recv_tokens_per_expert = max(1, torch.max(recv_expert_count))
+                    x = full_dispatch_tensor[:, :max_recv_tokens_per_expert, :].contiguous()
                     mask = torch.arange(
                         x.shape[1], dtype=torch.int32, device=x.device).expand(
                             x.shape[0],
@@ -631,11 +633,12 @@ class WideEPMoE(MoE):
                 final_hidden_states = self.deep_ep_buffer.combine(
                     final_hidden_states, deep_ep_handle)
             elif self.alltoall_method_type == AlltoallMethodType.DeepEPLowLatency:
+                full_dispatch_tensor[:, :max_recv_tokens_per_expert, :] = final_hidden_states.view(
+                    self.expert_size_per_partition,
+                    max_recv_tokens_per_expert,
+                    final_hidden_states.shape[1])
                 final_hidden_states = self.deep_ep_buffer.low_latency_combine(
-                    final_hidden_states.view(
-                        self.expert_size_per_partition,
-                        self.deep_ep_max_num_tokens * self.mapping.moe_ep_size,
-                        final_hidden_states.shape[1]), deep_ep_topk_idx,
+                    full_dispatch_tensor, deep_ep_topk_idx,
                     deep_ep_topk_weights, deep_ep_handle)
             else:
                 raise NotImplementedError(
