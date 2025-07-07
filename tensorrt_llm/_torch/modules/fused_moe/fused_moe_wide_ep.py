@@ -439,11 +439,6 @@ class WideEPMoE(MoE):
                         x.shape[0], self.routing_method.top_k)
                     token_final_scales = torch.ones_like(
                         token_selected_slots, dtype=token_final_scales.dtype)
-            else:
-                raise NotImplementedError(
-                    f"Not available alltoall method type: {alltoall_method_type!r}"
-                )
-
         x_sf = None
         x_row = x.shape[0]
         x_col = x.shape[1]
@@ -460,13 +455,13 @@ class WideEPMoE(MoE):
                         # note: we use uint8 to store 2 fp4 values
                         x_col = x.shape[1] * 2
                     else:
-                        sf_swizzle = not self.use_postquant_alltoall
+                        sf_swizzle = not (use_all_to_all and self.use_postquant_alltoall)
                         x_row = x.shape[0]
                         x_col = x.shape[1]
                         x, x_sf = torch.ops.trtllm.fp4_quantize(
                             x, self.fc31_input_scale, self.scaling_vector_size,
                             False, sf_swizzle)
-                        if self.use_postquant_alltoall:
+                        if (use_all_to_all and self.use_postquant_alltoall):
                             x_sf = x_sf.view((x_row, -1))
 
             elif self.has_deepseek_fp8_block_scales:
@@ -499,7 +494,6 @@ class WideEPMoE(MoE):
             if x_sf is not None:
                 x_sf = reswizzle_sf(x_sf, x_row, x_col,
                                     self.scaling_vector_size)
-
         if self.layer_load_balancer and not self.layer_load_balancer.is_static_routing(
         ) and is_last_call:
             gathered_loadbalancer_local_statistic_info = gathered_loadbalancer_local_statistic_info.view(
@@ -528,8 +522,7 @@ class WideEPMoE(MoE):
             cluster_size = self.cluster_size
             cluster_rank = self.cluster_rank
             quant_scales = self.quant_scales
-
-        if self.use_postquant_alltoall:
+        if use_all_to_all and self.use_postquant_alltoall:
             if self.alltoall_method_type == AlltoallMethodType.MNNVL:
                 x, x_sf = self.alltoall_postquant_dispatch(
                     x,
@@ -555,9 +548,65 @@ class WideEPMoE(MoE):
                         x_sf = swizzle_sf(x_sf, x.shape[0], x.shape[1] * 2,
                                           self.scaling_vector_size)
             elif self.alltoall_method_type == AlltoallMethodType.DeepEPLowLatency:
-                raise NotImplementedError(
-                    "Not implemented postquant for DeepEPLowLatency, please set TRTLLM_MOE_POST_QUANT_ALLTOALLV=0"
-                )
+                assert x_sf is not None and self.has_nvfp4 and not sf_swizzle
+                
+                x_sf_dtype = x_sf.dtype
+                x_dtype = x.dtype
+                assert x_sf_dtype == torch.uint8, f"x_sf_dtype: {x_sf_dtype}, x_sf.shape: {x_sf.shape}"
+                assert x_dtype == torch.uint8, f"x_dtype: {x_dtype}"
+                assert x_col == 7168, f"x_col: {x_col}"
+
+                x_sf = x_sf.view(torch.bfloat16) 
+                assert x_sf.shape[0] == x_row, f"x_sf.shape[0]: {x_sf.shape[0]}, x_row: {x_row}"
+                assert x_sf.shape[1] == x_col // 16 // 2, f"x_sf.shape[1]: {x_sf.shape[1]}, x_col: {x_col}"
+                
+                x = x.view(torch.bfloat16) 
+                assert x.shape[0] == x_row, f"x.shape[0]: {x.shape[0]}, x_row: {x_row}"
+                assert x.shape[1] == x_col // 4, f"x.shape[1]: {x.shape[1]}, x_col: {x_col}"
+
+                packed_hidden_size = x_col
+                assert x.shape[1] + x_sf.shape[1] <= packed_hidden_size, f"x.shape[1] + x_sf.shape[1]: {x.shape[1] + x_sf.shape[1]}, packed_hidden_size: {packed_hidden_size}"
+                
+                fp4_packed_tensor = torch.empty((x_row, packed_hidden_size), dtype=torch.bfloat16, device=x.device)
+                fp4_packed_tensor[:, :x.shape[1]] = x
+                fp4_packed_tensor[:, x.shape[1]:x.shape[1] + x_sf.shape[1]] = x_sf
+                
+                deep_ep_topk_idx = token_selected_slots.to(torch.int64)
+                deep_ep_topk_weights = token_final_scales
+                fp4_packed_tensor, recv_expert_count, deep_ep_handle = \
+                    self.deep_ep_buffer.low_latency_dispatch(fp4_packed_tensor, deep_ep_topk_idx, self.deep_ep_max_num_tokens, self.num_slots)
+                deep_ep_handle = list(deep_ep_handle)
+                deep_ep_handle[3] = x_col
+                deep_ep_handle = tuple(deep_ep_handle)
+
+                assert fp4_packed_tensor.ndim == 3, f"fp4_packed_tensor.ndim: {fp4_packed_tensor.ndim}"
+                assert fp4_packed_tensor.shape[2] == packed_hidden_size, f"fp4_packed_tensor.shape[2]: {fp4_packed_tensor.shape[2]}, packed_hidden_size: {packed_hidden_size}"
+                x_sf = fp4_packed_tensor[:, :, x.shape[1]:x.shape[1] + x_sf.shape[1]].contiguous()
+                x = fp4_packed_tensor[:, :, :x.shape[1]].contiguous()
+                mask = torch.arange(
+                    x.shape[1], dtype=torch.int32, device=x.device).expand(
+                        x.shape[0],
+                        x.shape[1]) < recv_expert_count.unsqueeze(1)
+                token_selected_slots = torch.full(
+                    (x.shape[0], x.shape[1], self.routing_method.top_k),
+                    self.num_slots,
+                    dtype=torch.int32,
+                    device=x.device)
+                token_selected_slots[:, :, 0] = torch.where(
+                    mask,
+                    torch.arange(
+                        x.shape[0] * self.mapping.moe_ep_rank,
+                        x.shape[0] * (self.mapping.moe_ep_rank + 1),
+                        dtype=torch.int32,
+                        device=x.device).unsqueeze(1), self.num_slots)
+                x = x.view(x.shape[0] * x.shape[1], x.shape[2]).view(x_dtype)
+                x_sf = x_sf.view(x_sf.shape[0] * x_sf.shape[1], x_sf.shape[2]).view(x_sf_dtype)
+                x_sf = swizzle_sf(x_sf, x.shape[0], x.shape[1] * 2,
+                                          self.scaling_vector_size)
+                token_selected_slots = token_selected_slots.view(
+                    x.shape[0], self.routing_method.top_k)
+                token_final_scales = torch.ones_like(
+                    token_selected_slots, dtype=token_final_scales.dtype)
             else:
                 raise NotImplementedError(
                     f"Not available alltoall method type: {alltoall_method_type!r}"
