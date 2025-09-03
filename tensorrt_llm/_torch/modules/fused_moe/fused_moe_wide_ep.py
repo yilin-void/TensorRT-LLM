@@ -520,9 +520,11 @@ class WideEPMoE(MoE):
         x_col = x.shape[1]
         if self.has_any_quant:
             if self.has_fp8_qdq:
+                print("has_fp8_qdq")
                 x, _ = torch.ops.tensorrt_llm.static_quantize_e4m3_per_tensor(
                     x, self.fc31_input_dequant)
             elif self.has_nvfp4:
+                print("has_nvfp4")
                 if use_allgather or use_postquant_alltoall:
                     if isinstance(x, Fp4QuantizedTensor):
                         if use_allgather:
@@ -544,8 +546,10 @@ class WideEPMoE(MoE):
                     x_sf = x_sf.view((x_row, -1))
 
             elif self.has_deepseek_fp8_block_scales:
+                print("has_deepseek_fp8_block_scales")
                 use_deepseek_fp8_block_scale = True
             elif self.has_w4afp8:
+                print("has_w4afp8")
                 use_w4_group_scaling = True
                 weight_dtype = torch.quint4x2
             else:
