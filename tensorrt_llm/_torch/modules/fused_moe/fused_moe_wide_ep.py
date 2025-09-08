@@ -17,8 +17,8 @@ from .deep_ep_utils import buffer_pool, deep_ep_installed
 from .interface import MoE
 from .moe_load_balancer import get_moe_load_balancer
 from .quantization import (DeepSeekFP8BlockScalesFusedMoEMethod,
-                           FP8QDQFusedMoEMethod, MoEWeightLoadingMode,
-                           NVFP4CutlassFusedMoEMethod,
+                           FP8QDQFusedMoEMethod, FusedMoEQuantScalesW4A8,
+                           MoEWeightLoadingMode, NVFP4CutlassFusedMoEMethod,
                            UnquantizedFusedMoEMethod, WInt4AFP8FusedMoEMethod)
 from .routing import BaseMoeRoutingMethod
 
@@ -310,6 +310,35 @@ class WideEPMoE(MoE):
 
         return self.enable_alltoall
 
+    def deep_ep_low_latency_dispatch_modify_output_to_adapt_fused_moe(
+        self, x: torch.Tensor, x_sf: Optional[torch.Tensor],
+        recv_expert_count: torch.Tensor, final_scales_dtype: torch.dtype
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor,
+               torch.Tensor]:
+        # x shape: [#local experts, EP size * all_rank_max_num_tokens, hidden_size]
+        # recv_expert_count shape: [#local experts]
+
+        # Adapter between `torch.ops.trtllm.fused_moe` and DeepEP
+        # TODO: remove the adapter by changing `torch.ops.trtllm.fused_moe` API
+        mask = torch.arange(x.shape[1],
+                            dtype=torch.int32, device=x.device).expand(
+                                x.shape[0],
+                                x.shape[1]) < recv_expert_count.unsqueeze(1)
+        token_selected_slots = torch.where(
+            mask,
+            torch.arange(x.shape[0] * self.mapping.moe_ep_rank,
+                         x.shape[0] * (self.mapping.moe_ep_rank + 1),
+                         dtype=torch.int32,
+                         device=x.device).unsqueeze(1), self.num_slots)
+        x = x.reshape(x.shape[0] * x.shape[1], x.shape[2])
+        if x_sf is not None:
+            x_sf = x_sf.reshape(x_sf.shape[0] * x_sf.shape[1], x_sf.shape[2])
+        # Cheat the fused_moe API with fake top_k=1
+        token_selected_slots = token_selected_slots.view(x.shape[0], 1)
+        token_final_scales = torch.ones_like(token_selected_slots,
+                                             dtype=final_scales_dtype)
+        return x, x_sf, token_selected_slots, token_final_scales
+
     def _get_quant_method(self):
         if self.quant_config is not None and self.quant_config.layer_quant_mode.has_any_quant(
                 exclude_kv_cache=True):
@@ -492,28 +521,8 @@ class WideEPMoE(MoE):
                     assert all_rank_max_num_tokens <= self.deep_ep_max_num_tokens
                     x, recv_expert_count, deep_ep_handle = \
                         self.deep_ep_buffer.low_latency_dispatch(x, deep_ep_topk_idx, all_rank_max_num_tokens, self.num_slots)
-                    # x shape: [#local experts, EP size * all_rank_max_num_tokens, hidden_size]
-                    # recv_expert_count shape: [#local experts]
-
-                    # Adapter between `torch.ops.trtllm.fused_moe` and DeepEP
-                    # TODO: remove the adapter by changing `torch.ops.trtllm.fused_moe` API
-                    mask = torch.arange(
-                        x.shape[1], dtype=torch.int32, device=x.device).expand(
-                            x.shape[0],
-                            x.shape[1]) < recv_expert_count.unsqueeze(1)
-                    token_selected_slots = torch.where(
-                        mask,
-                        torch.arange(
-                            x.shape[0] * self.mapping.moe_ep_rank,
-                            x.shape[0] * (self.mapping.moe_ep_rank + 1),
-                            dtype=torch.int32,
-                            device=x.device).unsqueeze(1), self.num_slots)
-                    x = x.reshape(x.shape[0] * x.shape[1], x.shape[2])
-                    # Cheat the fused_moe API with fake top_k=1
-                    token_selected_slots = token_selected_slots.view(
-                        x.shape[0], 1)
-                    token_final_scales = torch.ones_like(
-                        token_selected_slots, dtype=token_final_scales.dtype)
+                    x, _, token_selected_slots, token_final_scales = self.deep_ep_low_latency_dispatch_modify_output_to_adapt_fused_moe(
+                        x, None, recv_expert_count, token_final_scales.dtype)
 
         x_sf = None
         x_row = x.shape[0]
@@ -600,41 +609,48 @@ class WideEPMoE(MoE):
                 if x_sf is not None:
                     x_sf = x_sf.view(x_sf_dtype)
             elif self.alltoall_method_type == AlltoallMethodType.DeepEPLowLatency:
-                token_num = x_row
-                hidden_size = x_col
-                assert x_sf is not None and self.has_nvfp4
-                assert hidden_size % 32 == 0
-                assert x.dtype == torch.uint8 and x_sf.dtype == torch.uint8
-                assert x_sf.shape[0] == token_num and x_sf.shape[
-                    1] == hidden_size // 16
-                assert x.shape[0] == token_num and x.shape[1] == hidden_size // 2
-
+                assert self.has_any_quant, "DeepEPLowLatency postquant alltoall should have quantization"
+                assert all_rank_max_num_tokens <= self.deep_ep_max_num_tokens
                 deep_ep_topk_idx = token_selected_slots
                 deep_ep_topk_weights = token_final_scales
+                if self.has_fp8_qdq:
+                    assert x.dtype == torch.float8_e4m3fn and x_sf is None, "x should be torch.float8_e4m3fn and x_sf should be None in fp8 postquant alltoall"
+                    x = x.view(torch.bfloat16)
+                    x, recv_expert_count, deep_ep_handle = \
+                        self.deep_ep_buffer.low_latency_dispatch(x, deep_ep_topk_idx, all_rank_max_num_tokens, self.num_slots)
+                    x = x.view(torch.float8_e4m3fn)
+                elif self.has_nvfp4:
+                    token_num = x_row
+                    hidden_size = x_col
+                    assert x.dtype == torch.uint8 and x_sf is not None and x_sf.dtype == torch.uint8
+                    assert hidden_size % 32 == 0, "HiddenSize should be divisible by 32 in nvfp4 postquant alltoall"
+                    assert x_sf.shape[0] == token_num and x_sf.shape[
+                        1] == hidden_size // 16
+                    assert x.shape[0] == token_num and x.shape[
+                        1] == hidden_size // 2
 
-                assert all_rank_max_num_tokens <= self.deep_ep_max_num_tokens
-                x, x_sf, recv_expert_count, deep_ep_handle = \
-                    self.deep_ep_buffer.low_latency_dispatch_fp4(x, x_sf, deep_ep_topk_idx, all_rank_max_num_tokens, self.num_slots)
-                assert x.dtype == torch.uint8 and x_sf.dtype == torch.uint8
-                assert x.dim() == 3 and x_sf.dim() == 3
-                assert x.shape[2] == hidden_size // 2 and x_sf.shape[
-                    2] == hidden_size // 16
-
-                mask = torch.arange(
-                    x.shape[1], dtype=torch.int32, device=x.device).expand(
-                        x.shape[0], x.shape[1]) < recv_expert_count.unsqueeze(1)
-                token_selected_slots = torch.where(
-                    mask,
-                    torch.arange(x.shape[0] * self.mapping.moe_ep_rank,
-                                 x.shape[0] * (self.mapping.moe_ep_rank + 1),
-                                 dtype=torch.int32,
-                                 device=x.device).unsqueeze(1), self.num_slots)
-                x = x.reshape(x.shape[0] * x.shape[1], x.shape[2])
-                x_sf = x_sf.reshape(x_sf.shape[0] * x_sf.shape[1],
-                                    x_sf.shape[2])
-                token_selected_slots = token_selected_slots.view(x.shape[0], 1)
-                token_final_scales = torch.ones_like(
-                    token_selected_slots, dtype=token_final_scales.dtype)
+                    x, x_sf, recv_expert_count, deep_ep_handle = \
+                        self.deep_ep_buffer.low_latency_dispatch_fp4(x, x_sf, deep_ep_topk_idx, all_rank_max_num_tokens, self.num_slots)
+                    assert x.dtype == torch.uint8 and x_sf.dtype == torch.uint8
+                    assert x.dim() == 3 and x_sf.dim() == 3
+                    assert x.shape[2] == hidden_size // 2 and x_sf.shape[
+                        2] == hidden_size // 16
+                elif self.has_w4afp8:
+                    assert isinstance(quant_scales, FusedMoEQuantScalesW4A8)
+                    pre_quant_scales = quant_scales.pre_quant_scale_1
+                    assert pre_quant_scales.shape == (
+                        1, x.shape[1]) and pre_quant_scales.dtype == x.dtype
+                    x = (x * pre_quant_scales).to(torch.float8_e4m3fn).view(
+                        torch.bfloat16)
+                    x, recv_expert_count, deep_ep_handle = \
+                        self.deep_ep_buffer.low_latency_dispatch(x, deep_ep_topk_idx, all_rank_max_num_tokens, self.num_slots)
+                    x = x.view(torch.float8_e4m3fn)
+                else:
+                    raise ValueError(
+                        f"unsupported quantization mode in postquant alltoall: {self.quant_config.quant_mode}"
+                    )
+                x, x_sf, token_selected_slots, token_final_scales = self.deep_ep_low_latency_dispatch_modify_output_to_adapt_fused_moe(
+                    x, x_sf, recv_expert_count, token_final_scales.dtype)
             else:
                 raise NotImplementedError(
                     f"Not available alltoall method type: {self.alltoall_method_type!r}"
