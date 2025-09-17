@@ -188,10 +188,10 @@ class WideEPMoE(MoE):
             qm = self.quant_config.quant_mode
             self.use_postquant_alltoall = (os.environ.get(
                 "TRTLLM_MOE_POST_QUANT_ALLTOALLV", "1")
-                                           == "1") and qm.has_nvfp4()
+                                           == "1")
             self.use_low_precision_combine = (os.environ.get(
                 "TRTLLM_MOE_USE_LOW_PRECISION_COMBINE", "0")
-                                              == "1") and qm.has_nvfp4()
+                                              == "1")
 
             if self.alltoall_method_type == AlltoallMethodType.MNNVL:
                 MnnvlMemory.initialize()

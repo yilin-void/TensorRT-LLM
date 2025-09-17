@@ -1625,7 +1625,6 @@ void expandInputRowsKernelLauncher(InputActivationsType const* unpermuted_input,
         else if constexpr (std::is_same_v<ExpandedActivationsType, __nv_fp8_e4m3>
             && std::is_same_v<InputActivationsType, __nv_fp8_e4m3>)
         {
-            TLLM_CHECK_WITH_INFO(!prequant_scales, "NVFP4 is not supported for AWQ");
             return quant_params.mxfp8_mxfp4.fc1.weight_block_scale
                 ? &expandInputRowsKernel<InputActivationsType, ExpandedActivationsType,
                     TmaWarpSpecializedGroupedGemmInput::FpXBlockScalingType::MXFPX, false>
